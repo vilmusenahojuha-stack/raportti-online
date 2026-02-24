@@ -39,7 +39,7 @@ function handleCredentialResponse(response) {
 // ===============================
 // Google Apps Script URL (Web App /exec)
 const SHEETS_URL =
-  "https://script.google.com/macros/s/AKfycbyfKDZS5YfpGJCpOgUKdH_crgomudKiaRAYSYPZg5VJsNGn3FRlAKgS_amRzupKHHBY6A/exec";
+  "https://script.google.com/macros/s/AKfycbzxFeMmvmg9YD7izZR6zwcyGLd82p2mfI6_s29WILdnHmmpRH4DLWTOTaMii78w899Z5A/exec";
 // ===============================
 
 (function () {
