@@ -1,0 +1,23 @@
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f6f7fb;color:#111}
+.page{padding:12px}
+.authbox{max-width:520px;margin:18px auto;padding:14px;border:1px solid #ddd;border-radius:10px;background:#fff;text-align:center}
+.authstatus{margin-top:10px;font-weight:800}
+.authstatus.error{color:#b00020}
+.header{background:#fff;border-bottom:1px solid #e5e5e5;padding:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+label{display:flex;flex-direction:column;font-size:13px;gap:6px}
+input,select{padding:10px;border:1px solid #ccc;border-radius:8px;font-size:14px}
+table{width:100%;border-collapse:collapse;background:#fff;margin-top:12px}
+th,td{border:1px solid #e6e6e6;padding:6px;font-size:13px}
+thead th{background:#fafafa}
+.buttons{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.btn{padding:10px 14px;border:1px solid #333;border-radius:8px;background:#fff;cursor:pointer}
+.btn-danger{border-color:#b00020;color:#b00020}
+.status{font-weight:800}
+.status-ok{font-weight:900}
+.status-fail{font-weight:900;color:#b00020}
+.status-wait{font-weight:900}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:14px}
+.modal.hidden{display:none}
+.modal-content{background:#fff;border-radius:12px;max-width:720px;width:100%;padding:14px}
+.modal-buttons{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
