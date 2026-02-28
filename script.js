@@ -10,7 +10,7 @@
 
 // CONFIG
 const ALLOWED_EMAIL = "juha.vilmusenaho2026@gmail.com";
-const SHEETS_URL = "PASTE_YOUR_APPS_SCRIPT_WEBAPP_EXEC_URL_HERE"; // <-- paste your /exec URL after Apps Script deploy
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzxFeMmvmg9YD7izZR6zwcyGLd82p2mfI6_s29WILdnHmmpRH4DLWTOTaMii78w899Z5A/exec"; // <-- paste your /exec URL after Apps Script deploy
 
 // localStorage keys
 const LS_TOKEN = "kr_idtoken_v3";
