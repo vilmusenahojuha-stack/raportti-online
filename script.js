@@ -2,14 +2,16 @@
 // CONFIG
 const ALLOWED_EMAIL = "juha.vilmusenaho2026@gmail.com";
 const CLIENT_ID = "767469865393-5m24jc369g65fh5d51mcu1moocjd27r9.apps.googleusercontent.com";
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwg29bqm3Yxv6_1OHxLGUFS-YgxUHP4_BCxZGHNMlVOJb9yzW6yRWJhRaiXJ48uj2S_/exec";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwg29bqm3Yxv6_1OHxLGUFS-YgxUHP4_BCxZGHNMlVOJb9yzW6yRWJhRaiXJ48uj2S_/exec" ;
 // ===============================
 
-const LS_TOKEN = "kr_idtoken_v3";
-const LS_EMAIL = "kr_email_v3";
+const LS_EMAIL = "kr_email_v4";
+const LS_DEVICE_ID = "kr_device_id_v1";
+const LS_DEVICE_OK = "kr_device_ok_v1";
 
 let googleIdToken = null;
 let loggedInEmail = null;
+let trustedDeviceId = null;
 
 function $(id) { return document.getElementById(id); }
 
@@ -18,6 +20,11 @@ function lockApp(isLocked) {
   if (!app) return;
   if (isLocked) app.classList.add("app-locked");
   else app.classList.remove("app-locked");
+}
+
+function setAuthBoxVisible(v) {
+  const box = $("authBox");
+  if (box) box.style.display = v ? "" : "none";
 }
 
 function setAuthStatus(msg, isError = false) {
@@ -38,38 +45,139 @@ function setUserPill() {
   pill.textContent = loggedInEmail ? loggedInEmail : "";
 }
 
-function saveSession(token, email) {
-  localStorage.setItem(LS_TOKEN, token);
+function saveTrustedState(deviceId, email) {
+  localStorage.setItem(LS_DEVICE_ID, deviceId);
+  localStorage.setItem(LS_DEVICE_OK, "1");
   localStorage.setItem(LS_EMAIL, email);
 }
 
-function clearSession() {
-  localStorage.removeItem(LS_TOKEN);
+function clearTrustedState() {
+  localStorage.removeItem(LS_DEVICE_ID);
+  localStorage.removeItem(LS_DEVICE_OK);
   localStorage.removeItem(LS_EMAIL);
 }
 
-function loadSession() {
+function loadTrustedState() {
   return {
-    token: localStorage.getItem(LS_TOKEN),
+    deviceId: localStorage.getItem(LS_DEVICE_ID),
+    isTrusted: localStorage.getItem(LS_DEVICE_OK) === "1",
     email: localStorage.getItem(LS_EMAIL),
   };
 }
 
-function hardLock(reason) {
-  clearSession();
+function ensureDeviceId() {
+  let id = localStorage.getItem(LS_DEVICE_ID);
+  if (!id) {
+    id = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `dev_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+    localStorage.setItem(LS_DEVICE_ID, id);
+  }
+  return id;
+}
+
+function getDeviceName() {
+  const ua = navigator.userAgent || "";
+  if (/Android/i.test(ua)) return "Android-laite";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "iPhone/iPad";
+  if (/Windows/i.test(ua)) return "Windows-laite";
+  if (/Macintosh|Mac OS X/i.test(ua)) return "Mac-laite";
+  return "Selainlaite";
+}
+
+function setTrustedLoggedIn(email, deviceId) {
+  trustedDeviceId = deviceId;
+  loggedInEmail = email;
+  googleIdToken = null;
+  saveTrustedState(deviceId, email);
+  setAuthStatus("Laite hyväksytty: " + email);
+  setUserPill();
+  lockApp(false);
+  setAuthBoxVisible(false);
+  setLogoutVisible(true);
+}
+
+function hardLock(reason, clearDevice = false) {
+  if (clearDevice) clearTrustedState();
+  trustedDeviceId = null;
   googleIdToken = null;
   loggedInEmail = null;
   setUserPill();
   lockApp(true);
+  setAuthBoxVisible(true);
   setLogoutVisible(false);
   setAuthStatus(reason || "Kirjautuminen vaaditaan.", true);
   try { google?.accounts?.id?.disableAutoSelect?.(); } catch {}
 }
 
-function handleCredentialResponse(response) {
+async function checkTrustedDevice(deviceId, email) {
+  const url = `${SHEETS_URL}?action=checkDevice&deviceId=${encodeURIComponent(deviceId)}&email=${encodeURIComponent(email || "")}`;
+  const res = await fetch(url, { method: "GET" });
+  const txt = await res.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(txt);
+  } catch {
+    throw new Error("invalid_json");
+  }
+  if (!res.ok || !parsed?.ok) throw new Error(parsed?.error || "device_check_failed");
+  return parsed;
+}
+
+async function registerTrustedDevice(idToken, email) {
+  const deviceId = ensureDeviceId();
+  const body = {
+    action: "registerDevice",
+    idToken,
+    email,
+    deviceId,
+    deviceName: getDeviceName(),
+    userAgent: navigator.userAgent || "",
+  };
+
+  const res = await fetch(SHEETS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(body),
+  });
+  const txt = await res.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(txt);
+  } catch {
+    throw new Error("invalid_json");
+  }
+  if (!res.ok || !parsed?.ok) throw new Error(parsed?.error || "register_failed");
+  return { deviceId, email: parsed.email || email };
+}
+
+async function bootstrapAuth() {
+  if (!SHEETS_URL || SHEETS_URL.includes("PASTE_YOUR_APPS_SCRIPT_WEBAPP_EXEC_URL_HERE")) {
+    hardLock("Lisää Apps Script /exec URL script.js:ään.", false);
+    return;
+  }
+
+  const s = loadTrustedState();
+  if (s.deviceId && s.isTrusted && s.email === ALLOWED_EMAIL) {
+    setAuthStatus("Tarkistetaan laitetta…");
+    try {
+      const chk = await checkTrustedDevice(s.deviceId, s.email);
+      if (chk?.trusted && chk?.email === ALLOWED_EMAIL) {
+        setTrustedLoggedIn(chk.email, s.deviceId);
+        return;
+      }
+    } catch (err) {
+      console.warn("Laitteen tarkistus epäonnistui", err);
+    }
+  }
+
+  hardLock("Kirjaudu sisään tällä laitteella.", true);
+}
+
+async function handleCredentialResponse(response) {
   setAuthStatus("Kirjaudutaan…");
   const token = response?.credential || null;
-  if (!token) return hardLock("Kirjautuminen epäonnistui.");
+  if (!token) return hardLock("Kirjautuminen epäonnistui.", false);
 
   let email = null;
   try {
@@ -79,38 +187,32 @@ function handleCredentialResponse(response) {
     email = null;
   }
 
-  if (!email) return hardLock("Sähköpostia ei saatu tokenista.");
-  if (email !== ALLOWED_EMAIL) return hardLock("Tällä tilillä ei ole käyttöoikeutta.");
+  if (!email) return hardLock("Sähköpostia ei saatu tokenista.", false);
+  if (email !== ALLOWED_EMAIL) return hardLock("Tällä tilillä ei ole käyttöoikeutta.", true);
 
   googleIdToken = token;
-  loggedInEmail = email;
-  saveSession(token, email);
-
-  setAuthStatus("Kirjautunut: " + loggedInEmail);
-  setUserPill();
-  lockApp(false);
-  setLogoutVisible(true);
+  try {
+    const reg = await registerTrustedDevice(token, email);
+    setTrustedLoggedIn(reg.email, reg.deviceId);
+  } catch (err) {
+    console.warn("Laitteen rekisteröinti epäonnistui", err);
+    hardLock("Laitteen hyväksyntä epäonnistui. Yritä uudelleen.", false);
+  }
 }
 window.handleCredentialResponse = handleCredentialResponse;
 
 window.addEventListener("DOMContentLoaded", () => {
-  const s = loadSession();
-  if (s.token && s.email === ALLOWED_EMAIL) {
-    googleIdToken = s.token;
-    loggedInEmail = s.email;
-    setAuthStatus("Kirjautunut: " + loggedInEmail);
-    setUserPill();
-    lockApp(false);
-    setLogoutVisible(true);
-  } else {
-    lockApp(true);
-    setLogoutVisible(false);
-    setAuthStatus("Kirjautuminen vaaditaan.");
-  }
+  lockApp(true);
+  setAuthBoxVisible(true);
+  setLogoutVisible(false);
+  setAuthStatus("Tarkistetaan kirjautumista…");
 
   $("btnLogout")?.addEventListener("click", () => {
-    hardLock("Kirjauduttu ulos.");
+    clearTrustedState();
+    hardLock("Kirjauduttu ulos tältä laitteelta.", false);
   });
+
+  bootstrapAuth();
 });
 
 (function () {
@@ -303,8 +405,8 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function requireAuthOrAlert() {
-    if (loggedInEmail !== ALLOWED_EMAIL || !googleIdToken) {
-      hardLock("Kirjautuminen vaaditaan.");
+    if (loggedInEmail !== ALLOWED_EMAIL || !trustedDeviceId) {
+      hardLock("Kirjautuminen vaaditaan.", false);
       alert("Kirjaudu sisään ennen käyttöä.");
       return false;
     }
@@ -514,8 +616,9 @@ window.addEventListener("DOMContentLoaded", () => {
       maara: data.maara || "",
       tonnit: data.tonnit || "",
       tuote: data.tuote || "",
-      idToken: googleIdToken,
+      deviceId: trustedDeviceId || "",
       email: loggedInEmail || "",
+      idToken: googleIdToken || "",
     };
 
     try {
@@ -535,8 +638,8 @@ window.addEventListener("DOMContentLoaded", () => {
         ok = (txt || "").trim().toUpperCase() === "OK";
       }
 
-      if (!(res.ok && ok) && parsed && ["invalid_token", "aud_mismatch", "forbidden_email"].includes(parsed.error)) {
-        hardLock("Kirjautuminen vanhentui. Kirjaudu uudelleen.");
+      if (!(res.ok && ok) && parsed && ["unknown_device", "device_not_approved", "missing_auth", "forbidden_email", "invalid_token", "aud_mismatch"].includes(parsed.error)) {
+        hardLock("Laitteen kirjautuminen ei ole enää voimassa. Kirjaudu uudelleen.", true);
       }
 
       if (res.ok && ok && parsed?.loadNo) {
@@ -701,7 +804,10 @@ window.addEventListener("DOMContentLoaded", () => {
     if (!SHEETS_URL || SHEETS_URL.includes("PASTE_YOUR_APPS_SCRIPT_WEBAPP_EXEC_URL_HERE")) {
       throw new Error("missing_sheets_url");
     }
-    const url = `${SHEETS_URL}?action=nextLoadNumber&plate=${encodeURIComponent(cleanPlate)}`;
+    if (!trustedDeviceId || loggedInEmail !== ALLOWED_EMAIL) {
+      throw new Error("missing_device_auth");
+    }
+    const url = `${SHEETS_URL}?action=nextLoadNumber&plate=${encodeURIComponent(cleanPlate)}&deviceId=${encodeURIComponent(trustedDeviceId)}&email=${encodeURIComponent(loggedInEmail || "")}`;
     const res = await fetch(url, { method: "GET" });
     const txt = await res.text();
     let parsed = null;
