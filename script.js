@@ -5,6 +5,7 @@ const CLIENT_ID = "767469865393-5m24jc369g65fh5d51mcu1moocjd27r9.apps.googleuser
 const SHEETS_URL = "https://script.google.com/macros/s/AKfycby-qGhTBMk2cASKCAkG_Sv1SHxgBXHjCFDAdctu2qyRQ1Q-wMR-EIVud7evkZXdgHsdGg/exec";
 // ===============================
 
+const LS_TOKEN = "kr_idtoken_v3";
 const LS_EMAIL = "kr_email_v4";
 const LS_BROWSER_KEY = "kr_browser_key_v1";
 const LS_BROWSER_OK = "kr_browser_ok_v1";
@@ -51,14 +52,16 @@ function ensureBrowserKey() {
   return key;
 }
 
-function saveSession(email) {
+function saveSession(token, email) {
   ensureBrowserKey();
+  localStorage.setItem(LS_TOKEN, token || "");
   localStorage.setItem(LS_EMAIL, email);
   localStorage.setItem(LS_BROWSER_OK, "1");
   browserApproved = true;
 }
 
 function clearSession() {
+  localStorage.removeItem(LS_TOKEN);
   localStorage.removeItem(LS_EMAIL);
   localStorage.removeItem(LS_BROWSER_OK);
 }
@@ -67,6 +70,7 @@ function loadSession() {
   browserKey = localStorage.getItem(LS_BROWSER_KEY) || "";
   browserApproved = localStorage.getItem(LS_BROWSER_OK) === "1";
   return {
+    token: localStorage.getItem(LS_TOKEN),
     email: localStorage.getItem(LS_EMAIL),
     browserKey,
     browserApproved,
@@ -87,10 +91,6 @@ function hardLock(reason) {
 
 async function registerBrowserSession(token, email) {
   ensureBrowserKey();
-  if (!SHEETS_URL || SHEETS_URL.includes("PASTE_YOUR_APPS_SCRIPT_WEBAPP_EXEC_URL_HERE")) {
-    throw new Error("missing_sheets_url");
-  }
-
   const res = await fetch(SHEETS_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -141,7 +141,8 @@ async function handleCredentialResponse(response) {
     return hardLock("Kirjautuminen epäonnistui tällä laitteella.");
   }
 
-  saveSession(email);
+  saveSession(token, email);
+
   setAuthStatus("Kirjautunut: " + loggedInEmail);
   setUserPill();
   lockApp(false);
@@ -153,8 +154,16 @@ window.addEventListener("DOMContentLoaded", () => {
   const s = loadSession();
   ensureBrowserKey();
   if (s.browserApproved && s.email === ALLOWED_EMAIL) {
+    googleIdToken = s.token || null;
     loggedInEmail = s.email;
     setAuthStatus("Kirjautunut tällä laitteella: " + loggedInEmail);
+    setUserPill();
+    lockApp(false);
+    setLogoutVisible(true);
+  } else if (s.token && s.email === ALLOWED_EMAIL) {
+    googleIdToken = s.token;
+    loggedInEmail = s.email;
+    setAuthStatus("Kirjautunut: " + loggedInEmail);
     setUserPill();
     lockApp(false);
     setLogoutVisible(true);
@@ -359,8 +368,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function requireAuthOrAlert() {
-    const ok = loggedInEmail === ALLOWED_EMAIL && (browserApproved || !!googleIdToken);
-    if (!ok) {
+    if (loggedInEmail !== ALLOWED_EMAIL || !googleIdToken) {
       hardLock("Kirjautuminen vaaditaan.");
       alert("Kirjaudu sisään ennen käyttöä.");
       return false;
@@ -573,7 +581,6 @@ window.addEventListener("DOMContentLoaded", () => {
       tuote: data.tuote || "",
       idToken: googleIdToken,
       email: loggedInEmail || "",
-      browserKey: browserKey || ensureBrowserKey(),
     };
 
     try {
