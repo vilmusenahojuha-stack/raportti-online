@@ -6,14 +6,12 @@ const SHEETS_URL = "https://script.google.com/macros/s/AKfycby-qGhTBMk2cASKCAkG_
 // ===============================
 
 const LS_TOKEN = "kr_idtoken_v3";
-const LS_EMAIL = "kr_email_v4";
+const LS_EMAIL = "kr_email_v3";
 const LS_BROWSER_KEY = "kr_browser_key_v1";
 const LS_BROWSER_OK = "kr_browser_ok_v1";
 
 let googleIdToken = null;
 let loggedInEmail = null;
-let browserKey = null;
-let browserApproved = false;
 
 function $(id) { return document.getElementById(id); }
 
@@ -42,22 +40,20 @@ function setUserPill() {
   pill.textContent = loggedInEmail ? loggedInEmail : "";
 }
 
-function ensureBrowserKey() {
+function getBrowserKey() {
   let key = localStorage.getItem(LS_BROWSER_KEY);
   if (!key) {
-    key = `b_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+    key = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
     localStorage.setItem(LS_BROWSER_KEY, key);
   }
-  browserKey = key;
   return key;
 }
 
 function saveSession(token, email) {
-  ensureBrowserKey();
-  localStorage.setItem(LS_TOKEN, token || "");
+  if (token) localStorage.setItem(LS_TOKEN, token);
   localStorage.setItem(LS_EMAIL, email);
   localStorage.setItem(LS_BROWSER_OK, "1");
-  browserApproved = true;
+  getBrowserKey();
 }
 
 function clearSession() {
@@ -67,13 +63,11 @@ function clearSession() {
 }
 
 function loadSession() {
-  browserKey = localStorage.getItem(LS_BROWSER_KEY) || "";
-  browserApproved = localStorage.getItem(LS_BROWSER_OK) === "1";
   return {
     token: localStorage.getItem(LS_TOKEN),
     email: localStorage.getItem(LS_EMAIL),
-    browserKey,
-    browserApproved,
+    browserKey: getBrowserKey(),
+    browserApproved: localStorage.getItem(LS_BROWSER_OK) === "1",
   };
 }
 
@@ -81,7 +75,6 @@ function hardLock(reason) {
   clearSession();
   googleIdToken = null;
   loggedInEmail = null;
-  browserApproved = false;
   setUserPill();
   lockApp(true);
   setLogoutVisible(false);
@@ -89,16 +82,31 @@ function hardLock(reason) {
   try { google?.accounts?.id?.disableAutoSelect?.(); } catch {}
 }
 
+function parseJwtEmail(token) {
+  try {
+    const part = String(token || "").split(".")[1] || "";
+    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
+    const payload = JSON.parse(atob(padded));
+    return payload?.email || null;
+  } catch {
+    return null;
+  }
+}
+
 async function registerBrowserSession(token, email) {
-  ensureBrowserKey();
+  if (!SHEETS_URL || SHEETS_URL.includes("PASTE_YOUR_APPS_SCRIPT_WEBAPP_EXEC_URL_HERE")) {
+    throw new Error("missing_sheets_url");
+  }
+
   const res = await fetch(SHEETS_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({
       action: "registerBrowser",
+      browserKey: getBrowserKey(),
       idToken: token,
-      email,
-      browserKey,
+      email: email,
     }),
   });
 
@@ -113,6 +121,9 @@ async function registerBrowserSession(token, email) {
   if (!res.ok || !parsed?.ok) {
     throw new Error(parsed?.error || "register_failed");
   }
+
+  localStorage.setItem(LS_BROWSER_OK, "1");
+  return parsed;
 }
 
 async function handleCredentialResponse(response) {
@@ -120,19 +131,9 @@ async function handleCredentialResponse(response) {
   const token = response?.credential || null;
   if (!token) return hardLock("Kirjautuminen epäonnistui.");
 
-  let email = null;
-  try {
-    const payload = JSON.parse(atob(String(token).split(".")[1]));
-    email = payload?.email || null;
-  } catch {
-    email = null;
-  }
-
+  const email = parseJwtEmail(token);
   if (!email) return hardLock("Sähköpostia ei saatu tokenista.");
   if (email !== ALLOWED_EMAIL) return hardLock("Tällä tilillä ei ole käyttöoikeutta.");
-
-  googleIdToken = token;
-  loggedInEmail = email;
 
   try {
     await registerBrowserSession(token, email);
@@ -141,6 +142,8 @@ async function handleCredentialResponse(response) {
     return hardLock("Kirjautuminen epäonnistui tällä laitteella.");
   }
 
+  googleIdToken = token;
+  loggedInEmail = email;
   saveSession(token, email);
 
   setAuthStatus("Kirjautunut: " + loggedInEmail);
@@ -148,20 +151,13 @@ async function handleCredentialResponse(response) {
   lockApp(false);
   setLogoutVisible(true);
 }
+
 window.handleCredentialResponse = handleCredentialResponse;
 
 window.addEventListener("DOMContentLoaded", () => {
   const s = loadSession();
-  ensureBrowserKey();
   if (s.browserApproved && s.email === ALLOWED_EMAIL) {
     googleIdToken = s.token || null;
-    loggedInEmail = s.email;
-    setAuthStatus("Kirjautunut tällä laitteella: " + loggedInEmail);
-    setUserPill();
-    lockApp(false);
-    setLogoutVisible(true);
-  } else if (s.token && s.email === ALLOWED_EMAIL) {
-    googleIdToken = s.token;
     loggedInEmail = s.email;
     setAuthStatus("Kirjautunut: " + loggedInEmail);
     setUserPill();
@@ -368,7 +364,8 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   function requireAuthOrAlert() {
-    if (loggedInEmail !== ALLOWED_EMAIL || !googleIdToken) {
+    const s = loadSession();
+    if (loggedInEmail !== ALLOWED_EMAIL || !s.browserApproved || !s.browserKey) {
       hardLock("Kirjautuminen vaaditaan.");
       alert("Kirjaudu sisään ennen käyttöä.");
       return false;
@@ -401,28 +398,10 @@ window.addEventListener("DOMContentLoaded", () => {
     tuote.value = d.tuote || "";
 
     if (loadNoEl) {
-      loadNoEl.value = d.loadNo ? String(d.loadNo) : "Haetaan…";
+      loadNoEl.value = d.loadNo ? String(d.loadNo) : "Annetaan tallennettaessa";
     }
 
     modal?.classList.remove("hidden");
-
-    if (!d.loadNo) {
-      try {
-        const plate = String(auto?.value || "").trim();
-        if (!plate) {
-          if (loadNoEl) loadNoEl.value = "";
-          return;
-        }
-        const ln = await fetchNextLoadNo(plate);
-        d.loadNo = ln;
-        row.data = d;
-        if (loadNoEl) loadNoEl.value = String(ln);
-        persist();
-      } catch (err) {
-        console.warn("Kuormanumeron haku epäonnistui", err);
-        if (loadNoEl) loadNoEl.value = "";
-      }
-    }
   }
 
   function closeModal() {
@@ -459,6 +438,12 @@ window.addEventListener("DOMContentLoaded", () => {
       tuote: String(tuote.value || "").trim(),
     };
 
+    const validationError = hasAnyContent(d) ? validateRowData(d) : "";
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+
     rows[currentIndex].data = d;
 
     saveSuggestion("lastausList", d.lastausPaikka);
@@ -475,6 +460,16 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     closeModal();
+  }
+
+
+  function validateRowData(d) {
+    if (!String(pvm?.value || "").trim()) return "Päivämäärä puuttuu.";
+    if (!String(auto?.value || "").trim()) return "Auto nro puuttuu.";
+    if (!String(d.kuljettaja || "").trim()) return "Kuljettaja puuttuu.";
+    if (!String(d.lastausPvm || "").trim()) return "Lastaus pvm puuttuu.";
+    if (!String(d.purkuPvm || "").trim()) return "Purku pvm puuttuu.";
+    return "";
   }
 
   function hasAnyContent(d) {
@@ -579,7 +574,8 @@ window.addEventListener("DOMContentLoaded", () => {
       maara: data.maara || "",
       tonnit: data.tonnit || "",
       tuote: data.tuote || "",
-      idToken: googleIdToken,
+      browserKey: loadSession().browserKey || "",
+      idToken: googleIdToken || "",
       email: loggedInEmail || "",
     };
 
@@ -600,7 +596,7 @@ window.addEventListener("DOMContentLoaded", () => {
         ok = (txt || "").trim().toUpperCase() === "OK";
       }
 
-      if (!(res.ok && ok) && parsed && ["invalid_token", "aud_mismatch", "forbidden_email"].includes(parsed.error)) {
+      if (!(res.ok && ok) && parsed && ["invalid_token", "aud_mismatch", "forbidden_email", "missing_auth", "missing_browser_key"].includes(parsed.error)) {
         hardLock("Kirjautuminen vanhentui. Kirjaudu uudelleen.");
       }
 
