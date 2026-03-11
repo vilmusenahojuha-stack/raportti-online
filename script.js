@@ -2,7 +2,7 @@
 // CONFIG
 const ALLOWED_EMAIL = "juha.vilmusenaho2026@gmail.com";
 const CLIENT_ID = "767469865393-5m24jc369g65fh5d51mcu1moocjd27r9.apps.googleusercontent.com";
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycby-qGhTBMk2cASKCAkG_Sv1SHxgBXHjCFDAdctu2qyRQ1Q-wMR-EIVud7evkZXdgHsdGg/exec";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwDLJBvzDWlCasnazJ_FnsUJKem3hNC80qcrgY2mgqgk3E57ovq8AM99UDZi3SmjScf/exec";
 // ===============================
 
 const LS_TOKEN = "kr_idtoken_v3";
